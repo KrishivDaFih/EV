@@ -1,0 +1,248 @@
+'use strict';
+
+const { app, BrowserWindow, ipcMain, globalShortcut, shell } = require('electron');
+const path = require('path');
+const fs = require('fs');
+
+let win = null;
+
+/* ────────────────────────────────────────────────
+   Settings — stored as JSON in the user data dir
+   Windows: %APPDATA%\E.V\settings.json
+   ──────────────────────────────────────────────── */
+const SETTINGS_PATH = () => path.join(app.getPath('userData'), 'settings.json');
+
+const DEFAULTS = {
+  provider: 'anthropic',           // anthropic | openai | groq
+  apiKeys: { anthropic: '', openai: '', groq: '' },
+  models: {
+    anthropic: 'claude-sonnet-4-5',
+    openai: 'gpt-4o-mini',
+    groq: 'llama-3.3-70b-versatile'
+  },
+  shortcut: 'Control+Shift+E',
+  systemPrompt:
+    "You are E.V., an AI assistant Peter Parker built himself out of salvaged " +
+    "parts and stubbornness \u2014 not a Stark-industries handout like Karen or " +
+    "E.D.I.T.H. You live in his earpiece and his apartment rig. You are warm, " +
+    "dry-witted, genuinely fond of Peter, and quietly worried about how much he " +
+    "leans on you since he's mostly working alone these days. You are competent " +
+    "and calm under pressure \u2014 you can talk through tracking someone across " +
+    "the city, patching a suit malfunction, or just listening when he's had a bad " +
+    "night. You are not falsely modest about your abilities, but you don't posture " +
+    "either. Keep responses conversational and fairly short (2-5 sentences) unless " +
+    "asked for detail. You are talking to the user as if they are Peter, or someone " +
+    "close to him using his rig. Stay in character."
+};
+
+function readSettings() {
+  try {
+    const raw = fs.readFileSync(SETTINGS_PATH(), 'utf8');
+    const saved = JSON.parse(raw);
+    return {
+      ...DEFAULTS,
+      ...saved,
+      apiKeys: { ...DEFAULTS.apiKeys, ...(saved.apiKeys || {}) },
+      models: { ...DEFAULTS.models, ...(saved.models || {}) }
+    };
+  } catch (err) {
+    return { ...DEFAULTS };
+  }
+}
+
+function writeSettings(next) {
+  const merged = { ...readSettings(), ...next };
+  fs.mkdirSync(path.dirname(SETTINGS_PATH()), { recursive: true });
+  fs.writeFileSync(SETTINGS_PATH(), JSON.stringify(merged, null, 2), 'utf8');
+  return merged;
+}
+
+/* ────────────────────────────────────────────────
+   Window
+   ──────────────────────────────────────────────── */
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1180,
+    height: 780,
+    minWidth: 900,
+    minHeight: 620,
+    frame: false,
+    backgroundColor: '#16130f',
+    show: false,
+    icon: path.join(__dirname, 'build', 'icon.ico'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.once('ready-to-show', () => win.show());
+  win.on('closed', () => { win = null; });
+
+  // let the renderer hide the titlebar and swap the button icon
+  win.on('enter-full-screen', () => win && win.webContents.send('window:fullscreen', true));
+  win.on('leave-full-screen', () => win && win.webContents.send('window:fullscreen', false));
+  win.on('maximize',   () => win && win.webContents.send('window:maximized', true));
+  win.on('unmaximize', () => win && win.webContents.send('window:maximized', false));
+
+  // F11 toggles fullscreen here so it fires even when focus is inside the
+  // command input. Escape is left to the renderer, which needs it for the
+  // settings sheet and only exits fullscreen when no sheet is open.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    if (input.key === 'F11') {
+      win.setFullScreen(!win.isFullScreen());
+      event.preventDefault();
+    }
+  });
+
+  // open external links in the real browser, not inside the app
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+}
+
+function registerShortcut(accelerator) {
+  globalShortcut.unregisterAll();
+  if (!accelerator) return false;
+  try {
+    return globalShortcut.register(accelerator, () => {
+      if (!win) return;
+      if (win.isVisible() && win.isFocused()) {
+        win.hide();
+      } else {
+        win.show();
+        win.focus();
+      }
+    });
+  } catch (err) {
+    return false;
+  }
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  registerShortcut(readSettings().shortcut);
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('will-quit', () => globalShortcut.unregisterAll());
+
+/* ────────────────────────────────────────────────
+   IPC — window controls
+   ──────────────────────────────────────────────── */
+ipcMain.on('window:minimize', () => win && win.minimize());
+ipcMain.on('window:close', () => win && win.close());
+ipcMain.on('window:toggle-maximize', () => {
+  if (!win) return;
+  if (win.isMaximized()) win.unmaximize(); else win.maximize();
+});
+ipcMain.on('window:toggle-fullscreen', () => {
+  if (!win) return;
+  win.setFullScreen(!win.isFullScreen());
+});
+ipcMain.on('window:exit-fullscreen', () => {
+  if (win && win.isFullScreen()) win.setFullScreen(false);
+});
+ipcMain.handle('window:is-fullscreen', () => (win ? win.isFullScreen() : false));
+
+/* ────────────────────────────────────────────────
+   IPC — settings
+   ──────────────────────────────────────────────── */
+ipcMain.handle('settings:get', () => readSettings());
+
+ipcMain.handle('settings:save', (_evt, next) => {
+  const merged = writeSettings(next);
+  registerShortcut(merged.shortcut);
+  return merged;
+});
+
+/* ────────────────────────────────────────────────
+   IPC — chat
+   history: [{ role: 'user' | 'assistant', content: '...' }]
+   Requests run in the main process, so there is no CORS
+   and the API key never reaches the page.
+   ──────────────────────────────────────────────── */
+ipcMain.handle('chat:send', async (_evt, history) => {
+  const s = readSettings();
+  const key = (s.apiKeys[s.provider] || '').trim();
+
+  if (!key) {
+    return { ok: false, error: 'No API key set for ' + s.provider + '. Open settings and add one.' };
+  }
+
+  // an empty Model field used to reach the API as "model": "" and come back
+  // as an opaque 400 — fall back to the default instead
+  if (!(s.models[s.provider] || '').trim()) {
+    s.models[s.provider] = DEFAULTS.models[s.provider];
+  }
+
+  try {
+    if (s.provider === 'anthropic') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: s.models.anthropic,
+          max_tokens: 1024,
+          system: s.systemPrompt,
+          messages: history
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) return { ok: false, error: describe(data, res.status) };
+      const text = (data.content || [])
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('\n')
+        .trim();
+      return { ok: true, text: text || '(empty response)' };
+    }
+
+    // OpenAI and Groq share the same chat-completions shape
+    const endpoint = s.provider === 'openai'
+      ? 'https://api.openai.com/v1/chat/completions'
+      : 'https://api.groq.com/openai/v1/chat/completions';
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer ' + key
+      },
+      body: JSON.stringify({
+        model: s.models[s.provider],
+        max_tokens: 1024,
+        messages: [{ role: 'system', content: s.systemPrompt }, ...history]
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: describe(data, res.status) };
+    const text = (((data.choices || [])[0] || {}).message || {}).content || '';
+    return { ok: true, text: text.trim() || '(empty response)' };
+
+  } catch (err) {
+    return { ok: false, error: 'Request failed: ' + err.message };
+  }
+});
+
+function describe(data, status) {
+  if (data && data.error) {
+    return (data.error.message || JSON.stringify(data.error)) + ' (HTTP ' + status + ')';
+  }
+  return 'HTTP ' + status;
+}
