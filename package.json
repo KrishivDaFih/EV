@@ -1,8 +1,8 @@
 {
   "name": "ev-assistant",
   "productName": "E.V.",
-  "version": "1.0.1",
-  "description": "E.V. — homemade field assistant.",
+  "version": "1.0.2",
+  "description": "E.V. \u2014 homemade field assistant.",
   "main": "main.js",
   "author": "Kris",
   "license": "MIT",
@@ -18,7 +18,7 @@
   "build": {
     "appId": "com.kris.ev",
     "productName": "E.V.",
-    "copyright": "Copyright © 2026 Kris",
+    "copyright": "Copyright \u00a9 2026 Kris",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -33,7 +33,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico",
@@ -50,7 +52,8 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
     }
   }
 }

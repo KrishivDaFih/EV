@@ -1,10 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, globalShortcut, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, shell, Tray, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 let win = null;
+let tray = null;
 
 /* ────────────────────────────────────────────────
    Settings — stored as JSON in the user data dir
@@ -123,8 +124,40 @@ function registerShortcut(accelerator) {
   }
 }
 
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!win) return;
+    if (!win.isVisible()) win.show();
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  });
+}
+
+function createTray() {
+  try {
+    tray = new Tray(path.join(__dirname, 'build', 'icon.ico'));
+    tray.setToolTip('E.V.');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Show E.V.', click: () => { if (win) { win.show(); win.focus(); } } },
+      { type: 'separator' },
+      { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } }
+    ]));
+    // double-clicking the tray icon toggles the window
+    tray.on('double-click', () => {
+      if (!win) return;
+      if (win.isVisible()) win.hide(); else { win.show(); win.focus(); }
+    });
+  } catch (err) {
+    // a missing icon should never stop the app from starting
+  }
+}
+
 app.whenReady().then(() => {
   createWindow();
+  createTray();
   registerShortcut(readSettings().shortcut);
 
   app.on('activate', () => {
@@ -136,7 +169,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  if (tray) { tray.destroy(); tray = null; }
+});
 
 /* ────────────────────────────────────────────────
    IPC — window controls

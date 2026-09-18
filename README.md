@@ -26,7 +26,7 @@ First launch opens settings automatically, because no API key is stored yet.
 npm run dist
 ```
 
-Installer lands at `dist\EV-Setup-1.0.1.exe` — choose-your-folder, Start Menu
+Installer lands at `dist\EV-Setup-1.0.2.exe` — choose-your-folder, Start Menu
 entry, Desktop shortcut, per-user (no admin prompt), proper uninstaller.
 `npm run dist:portable` gives a single portable .exe instead.
 
